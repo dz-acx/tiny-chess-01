@@ -1,103 +1,110 @@
-import os;from json import loads,dumps;from urllib.request import Request,urlopen
-ENV=os.environ.get("MAKEFUN_ENV_URL","http://localhost:8000").rstrip("/")
-MAX_N=30000;VAL=dict(P=100,N=320,B=330,R=500,Q=900,K=20000)
-PST={k:[int(x,16)-5 for x in "555566636545555766686678aaaa55550122135626672577267725671355012278657755433332212110211021102110"[i*32:i*32+32]]for i,k in enumerate("PNK")}
-B,R=(-17,-15,15,17),(-16,-1,1,16);D=dict(N=((-33,-31,-18,-14,14,18,31,33),0),B=(B,1),R=(R,1),Q=(B+R,1),K=(B+R,0))
-to_uci=lambda m:f"{chr(97+(m[0]&7))}{(m[0]>>4)+1}{chr(97+(m[1]&7))}{(m[1]>>4)+1}{m[2]}"
-
+import json,os,urllib.request as U;E=os.environ["MAKEFUN_ENV_URL"]
+def post(p,b):return json.load(U.urlopen(U.Request(E+p,json.dumps(b).encode())))
+VAL=dict(P=100,N=320,B=330,R=500,Q=900,K=20000);B,R=(-17,-15,15,17),(-16,-1,1,16);N=(-33,-31,-18,-14,14,18,31,33);D=dict(N=N,B=B,R=R,Q=B+R,K=B+R)
+PST_S="555555676789789b12333577468824553444466646774655556745564556788934554667567745667864454222201110";to_uci=lambda m:f"{chr(97+(m[0]&7))}{m[0]//16+1}{chr(97+(m[1]&7))}{m[1]//16+1}{m[2]}"
 def parse_fen(f):
  p,b,r,i=f.split(),["."]*128,7,0
  for c in p[0]:
-  if c=="/":r,i=r-1,0
+  if c=="/":r-=1;i=0
   elif c.isdigit():i+=int(c)
-  else:b[r*16+i],i=c,i+1
+  else:b[r*16+i]=c;i+=1
  return b,p[1],p[2],ord(p[3][0])+int(p[3][1])*16-113 if len(p)>3 and p[3]!="-"else None
-
-in_chk=lambda b,s:(k:="kK"[s=="w"])in b and any(m[1]==b.index(k)for m in gen_m((b,"wb"[s=="w"],"",None),True))
-
-def gen_m(st,caps=False):
- b,s,cast,ep=st;w,f=s=="w",16 if s=="w"else -16
- for sq,p in enumerate(b):
-  if sq&0x88 or p=="." or p.isupper()!=w:continue
+def attacked(b,sq,w):
+ for ds,p in(((-17,-15)if w else(15,17),"P"if w else"p"),(N,"N"if w else"n"),(B+R,"K"if w else"k")):
+  for d in ds:
+   if not(sq+d)&0x88 and b[sq+d]==p:return True
+ for dr,pcs in((B,"BQ"if w else"bq"),(R,"RQ"if w else"rq")):
+  for d in dr:
+   t=sq+d
+   while not t&0x88:
+    if(p:=b[t])!=".":
+     if p in pcs:return True
+     break
+    t+=d
+ return False
+in_chk=lambda b,s:(k:="K"if s=="w"else"k")in b and attacked(b,b.index(k),s!="w")
+def gen_m(st,cp=0):
+ b,s,cs,e=st;w=s=="w";f=w*32-16
+ for q,p in enumerate(b):
+  if q&0x88 or p=="."or p.isupper()!=w:continue
   u=p.upper()
   if u=="P":
    for d,c in((f,0),(f-1,1),(f+1,1)):
-    t=sq+d
-    if not t&0x88 and((not c and b[t]==".")or(c and((b[t]!="." and b[t].isupper()!=w)or t==ep))):
-     for pr in("qrbn" if t>>4 in(0,7)else("",)):
-      if c or pr or not caps:yield(sq,t,pr)
-     if not c and not caps and sq>>4==(1 if w else 6) and b[sq+2*f]==".":yield(sq,sq+2*f,"")
+    t=q+d
+    if not t&0x88 and(b[t]=="."if not c else b[t]!="."and b[t].isupper()!=w or t==e):
+     for r in("q",)if t>>4 in(0,7)else("",):
+      if c or r or not cp:yield q,t,r
+     if not(c or cp)and q>>4==(6-5*w)and b[q+2*f]==".":yield q,q+2*f,""
   else:
-   dirs,slide=D[u]
-   for d in dirs:
-    t=sq+d
+   for d in D[u]:
+    t=q+d
     while not t&0x88:
-     if b[t]!=".":
-      if b[t].isupper()!=w:yield(sq,t,"")
+     if(x:=b[t])!=".":
+      if x.isupper()!=w:yield q,t,""
       break
-     if not caps:yield(sq,t,"")
-     if not slide:break
+     if not cp:yield q,t,""
+     if u not in"BRQ":break
      t+=d
-   if u=="K" and not caps and sq in(4,116) and not in_chk(b,s):
-    for tag,off,er in(("kK"[w],2,(1,2)),("qQ"[w],-2,(-1,-2,-3))):
-     if tag in cast and all(b[sq+i]=="."for i in er) and not in_chk(make_m(st,(sq,sq+off//2,""))[0],s):yield(sq,sq+off,"")
-
-def make_m(st,m):
- b,s,cast,ep=st;f,t,pr=m;nb,p,w=list(b),b[f],s=="w"
- nb[f],nb[t]=".",pr.upper()if w and pr else(pr or p)
- if p in"Pp" and t==ep:nb[t+(-16 if w else 16)]="."
- elif p in"Kk" and abs(t-f)==2:nb[f+(3 if t>f else -4)],nb[f+(1 if t>f else -1)]=".",("rR"[w])
- nc=cast.replace("K" if p=="K" else "k","").replace("Q" if p=="K" else "q","")if p in"Kk"else cast
- for sq,ch in zip((0,7,112,119),"QKqk"):
-  if sq in(f,t):nc=nc.replace(ch,"")
- return nb,"wb"[w],nc,(f+t)//2 if p in"Pp" and abs(t-f)==32 else None
-
+   if u=="K"and not(cp or attacked(b,q,not w)):
+    for c,d in(("kK"[w],2),("qQ"[w],-2)):
+     if c in cs and not attacked(b,q+d//2,not w)and b[q+d//2]==b[q+d]=="."and(d>0 or b[q-3]=="."):yield q,q+d,""
+def make_m(s,m):
+ b,u,c,e=s;f,t,x=m;n,p,w=list(b),b[f],u=="w";n[f],n[t]=".",x.upper()if w and x else(x or p)
+ if p in"Pp"and t==e:n[t+16-w*32]="."
+ elif p in"Kk"and abs(t-f)==2:n[f+(3 if t>f else -4)],n[f+(1 if t>f else -1)]=".","rR"[w]
+ if p in"Kk":c=c.replace("kK"[w],"").replace("qQ"[w],"")
+ for q,k in zip((0,7,112,119),"QKqk"):c=c.replace(k,"")if q in(f,t)else c
+ return n,"wb"[w],c,(f+t)//2 if p in"Pp"and abs(t-f)==32 else None
+I=lambda q,w:((q>>4 if w else 7-(q>>4))//2)*4+min(q&7,7-(q&7))
 def evaluate(st):
- b,s,tot=st[0],st[1],0
+ b,s=st[:2];tot,K=0,[0,0];P=lambda i:(int(PST_S[i],16)-5)*10
  for sq,p in enumerate(b):
-  if not sq&0x88 and p!=".":
-   u,r,f,w=p.upper(),sq>>4,sq&7,p.isupper()
-   v=VAL[u]+(PST[u][(r if w else 7-r)*4+min(f,7-f)]*10 if u in PST else 0)
-   tot+=v if w else -v
- return tot if s=="w"else -tot
-
-v=lambda x:VAL.get(x.upper(),0)
-def order(st,ms):
- b,ep=st[0],st[3]
- return sorted(ms,key=lambda m:(v(b[m[1]])*10-v(b[m[0]])if b[m[1]]!="."else(900 if b[m[0]]in"Pp" and m[1]==ep else 0))+v(m[2]),reverse=True)
-
-def negamax(st,d,a,b,ply,nodes,root=False):
- if nodes[0]>=MAX_N:return(None,0)if root else 0
- nodes[0]+=1;chk=in_chk(st[0],st[1])
- if d<=0 and not chk:
-  pat=evaluate(st)
-  if pat>=b:return b
-  if a<pat:a=pat
- legal,best_m=0,None
- for m in order(st,gen_m(st,d<=0 and not chk)):
-  nxt=make_m(st,m)
-  if in_chk(nxt[0],st[1]):continue
-  legal+=1;s=-negamax(nxt,d-1,-b,-a,ply+1,nodes)
-  if nodes[0]>=MAX_N and legal>1:break
-  if s>a:
-   a,best_m=s,m
-   if not root and a>=b:return b
- mate=-30000+ply if chk else 0
- return((None,mate)if root else mate)if not legal else((best_m,a)if root else a)
-
-def choose_move(st,ms=None):
- nodes,best=[0],None
+  if sq&0x88 or p==".":continue
+  u,w=p.upper(),p.isupper()
+  if u=="K":K[w]=sq;continue
+  v=VAL[u]+P("PNBRQK".index(u)*16+I(sq,w));tot+=v if w else-v
+ return(tot+P(80+I(K[1],1))-P(80+I(K[0],0)))*((s=="w")*2-1)
+def order(s,m,v=None):
+ b,e=s[0],s[3]
+ def c(x):
+  if x==v:return 9000000
+  f,t,p=x;q="p"if b[t]=="."and b[f]in"Pp"and t==e else b[t];return((10000+VAL[q.upper()]*10-VAL[b[f].upper()])if q!="."else 0)+VAL.get(p.upper(),0)
+ return sorted(m,key=c,reverse=1)
+M=100000
+def qsearch(s,a,b,n):
+ if n[0]>=M:return evaluate(s)
+ n[0]+=1;p=evaluate(s)
+ if p>=b:return b
+ a=max(a,p)
+ for m in order(s,gen_m(s,1)):
+  x=make_m(s,m)
+  if in_chk(x[0],s[1]):continue
+  v=-qsearch(x,-b,-a,n)
+  if v>=b:return b
+  a=max(a,v)
+ return a
+def negamax(s,d,a,b,p,n,v=None):
+ if n[0]>=M:return 0,None
+ n[0]+=1;c=in_chk(s[0],s[1])
+ if d<=0:
+  if not c:return qsearch(s,a,b,n),None
+  d=1
+ l,k=0,None
+ for m in order(s,gen_m(s,0),v):
+  x=make_m(s,m)
+  if in_chk(x[0],s[1]):continue
+  l+=1;r=-negamax(x,d-1,-b,-a,p+1,n)[0]
+  if n[0]>=M and l>1:break
+  if r>a:
+   a,k=r,m
+   if a>=b:return b,k
+ return(a,k)if l else(-30000+p if c else 0,None)
+def choose(f,l):
+ s=parse_fen(f);n,k=[0],None
  for d in range(1,64):
-  if nodes[0]>=MAX_N:break
-  m,_=negamax(st,d,-10**6,10**6,0,nodes,root=True)
-  if m and nodes[0]<MAX_N:best=m
- u=to_uci(best or next(gen_m(st)))
- return u if not ms or u in ms else ms[0]
-
-post=lambda p,b:loads(urlopen(Request(f"{ENV}{p}",dumps(b).encode(),{"Content-Type":"application/json"})).read())
-
-def main():
- g=post("/game",{})
- while g.get("status")!="done":g=post("/move",{"game":g.get("game",g.get("id")),"move":choose_move(parse_fen(g["fen"]),g.get("legal_moves",[]))})
-
-if __name__=="__main__":main()
+  if n[0]>=M:break
+  _,m=negamax(s,d,-M,M,0,n,k)
+  if m and n[0]<M:k=m
+ u=to_uci(k)if k else"";return u if u in l else l[0]
+while(g:=post("/game",{}))["status"]!="done":
+ while g["status"]=="your_move":g=post("/move",{"game":g["game"],"move":choose(g["fen"],g["legal_moves"])})
